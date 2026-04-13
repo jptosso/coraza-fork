@@ -199,19 +199,6 @@ func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Tra
 	logger.Debug().Msg("Evaluating rule")
 	defer logger.Debug().Msg("Finished rule evaluation")
 
-	ruleCol := tx.variables.rule
-	ruleCol.SetIndex("id", 0, r.LogID())
-	if r.Msg != nil {
-		// Expand the message using the current TX variables so that %{rule.msg} in setvar actions
-		// returns the fully expanded message, matching ModSecurity behavior.
-		ruleCol.SetIndex("msg", 0, r.Msg.Expand(tx))
-	}
-	ruleCol.SetIndex("rev", 0, r.Rev_)
-	if r.LogData != nil {
-		// Same expansion for logdata, matching ModSecurity behavior for %{rule.logdata}.
-		ruleCol.SetIndex("logdata", 0, r.LogData.Expand(tx))
-	}
-	ruleCol.SetIndex("severity", 0, r.Severity_.String())
 	// SecMark and SecAction uses nil operator
 	if r.operator == nil {
 		logger.Debug().Msg("Forcing rule to match")
@@ -229,9 +216,11 @@ func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Tra
 		if multiphaseEvaluation {
 			*collectiveMatchedValues = append(*collectiveMatchedValues, md)
 		}
+		r.populateRuleVars(tx)
 		r.matchVariable(tx, md)
 	} else {
 		ecol := tx.ruleRemoveTargetByID[r.ID_]
+		var ruleVarsPopulated bool
 		for _, v := range r.variables {
 			if multiphaseEvaluation && multiphaseSkipVariable(r, v.Variable, phase) {
 				continue
@@ -283,6 +272,10 @@ func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Tra
 
 					match := r.executeOperator(carg, tx)
 					if match {
+						if !ruleVarsPopulated {
+							r.populateRuleVars(tx)
+							ruleVarsPopulated = true
+						}
 						mr := &corazarules.MatchData{
 							Variable_:   arg.Variable(),
 							Key_:        arg.Key(),
@@ -474,6 +467,25 @@ func (r *Rule) transformArg(arg types.MatchData, argIdx int, cache map[transform
 
 		return value, errs
 	}
+}
+
+// populateRuleVars writes the current rule's metadata into tx.variables.rule.
+// This is called only when a rule matches (or for nil-operator rules that always match),
+// not for every rule evaluation.
+func (r *Rule) populateRuleVars(tx *Transaction) {
+	ruleCol := tx.variables.rule
+	ruleCol.SetIndex("id", 0, r.LogID())
+	if r.Msg != nil {
+		// Expand the message using the current TX variables so that %{rule.msg} in setvar actions
+		// returns the fully expanded message, matching ModSecurity behavior.
+		ruleCol.SetIndex("msg", 0, r.Msg.Expand(tx))
+	}
+	ruleCol.SetIndex("rev", 0, r.Rev_)
+	if r.LogData != nil {
+		// Same expansion for logdata, matching ModSecurity behavior for %{rule.logdata}.
+		ruleCol.SetIndex("logdata", 0, r.LogData.Expand(tx))
+	}
+	ruleCol.SetIndex("severity", 0, r.Severity_.String())
 }
 
 func (r *Rule) matchVariable(tx *Transaction, m *corazarules.MatchData) {

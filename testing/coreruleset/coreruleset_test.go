@@ -749,8 +749,6 @@ func crsWAF(t testing.TB) coraza.WAF {
 	}
 	customTestingConfig := `
 SecResponseBodyMimeType text/plain
-SecDefaultAction "phase:3,log,auditlog,pass"
-SecDefaultAction "phase:4,log,auditlog,pass"
 
 # Rule 900005 from https://github.com/coreruleset/coreruleset/blob/v4.0/dev/tests/regression/README.md#requirements
 SecAction "id:900005,\

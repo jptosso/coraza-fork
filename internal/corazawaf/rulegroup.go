@@ -18,8 +18,9 @@ import (
 // It is not concurrent safe, so it's not recommended to use it
 // after compilation
 type RuleGroup struct {
-	rules    []Rule
-	observer func(rule types.RuleMetadata)
+	rules        []Rule
+	rulesByPhase [6][]*Rule // built by FinalizeRules; index = RulePhase (0-5)
+	observer     func(rule types.RuleMetadata)
 }
 
 // Add a rule to the collection
@@ -105,6 +106,7 @@ func (rg *RuleGroup) DeleteByID(id int) {
 	for i, r := range rg.rules {
 		if r.ID_ == id {
 			rg.rules = append(rg.rules[:i], rg.rules[i+1:]...)
+			rg.FinalizeRules()
 			return
 		}
 	}
@@ -119,6 +121,7 @@ func (rg *RuleGroup) DeleteByRange(start, end int) {
 		}
 	}
 	rg.rules = kept
+	rg.FinalizeRules()
 }
 
 // DeleteByMsg deletes rules with the given message.
@@ -130,6 +133,7 @@ func (rg *RuleGroup) DeleteByMsg(msg string) {
 		}
 	}
 	rg.rules = kept
+	rg.FinalizeRules()
 }
 
 // DeleteByTag deletes rules with the given tag.
@@ -141,11 +145,69 @@ func (rg *RuleGroup) DeleteByTag(tag string) {
 		}
 	}
 	rg.rules = kept
+	rg.FinalizeRules()
 }
 
 // Count returns the count of rules
 func (rg *RuleGroup) Count() int {
 	return len(rg.rules)
+}
+
+// ruleRunsInPhase returns true if the rule should be evaluated during the given phase.
+// This mirrors the phase-check logic in Eval() to allow pre-indexing rules by phase.
+func ruleRunsInPhase(r *Rule, phase types.RulePhase) bool {
+	// Phase 0 rules (SecAction, SecMarker) always run
+	if r.Phase_ == 0 {
+		return true
+	}
+	// Exact phase match
+	if r.Phase_ == phase {
+		return true
+	}
+	// Multiphase evaluation: inferred phases
+	if multiphaseEvaluation {
+		if !r.HasChain && r.has(phase) {
+			return true
+		}
+		if r.HasChain {
+			// Must be within the chain's valid phase range
+			if phase < r.chainMinPhase {
+				return false
+			}
+			if !r.hasOrMinor(phase) && !r.withPhaseUnknownVariable {
+				return false
+			}
+			if phase > r.Phase_ {
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// FinalizeRules pre-computes per-rule data and builds the phase index.
+// Must be called once after all rules are loaded.
+func (rg *RuleGroup) FinalizeRules() {
+	// Step 1: compute chainMinPhase for chained rules
+	if multiphaseEvaluation {
+		for i := range rg.rules {
+			computeRuleChainMinPhase(&rg.rules[i])
+		}
+	}
+
+	// Step 2: build phase index
+	for i := range rg.rulesByPhase {
+		rg.rulesByPhase[i] = rg.rulesByPhase[i][:0]
+	}
+	for i := range rg.rules {
+		r := &rg.rules[i]
+		for phase := types.RulePhase(0); phase <= types.PhaseLogging; phase++ {
+			if ruleRunsInPhase(r, phase) {
+				rg.rulesByPhase[phase] = append(rg.rulesByPhase[phase], r)
+			}
+		}
+	}
 }
 
 // Eval rules for the specified phase, between 1 and 5
@@ -164,28 +226,20 @@ func (rg *RuleGroup) Eval(phase types.RulePhase, tx *Transaction) bool {
 	for k := range transformationCache {
 		delete(transformationCache, k)
 	}
+
+	// Fallback if FinalizeRules was not called (e.g., in tests that add rules directly)
+	if rg.rulesByPhase[0] == nil && rg.rulesByPhase[phase] == nil && len(rg.rules) > 0 {
+		// This should not happen in production; FinalizeRules must be called after loading rules.
+		// For test compatibility, rebuild the index now.
+		rg.FinalizeRules()
+	}
+
 RulesLoop:
-	for i := range rg.rules {
-		r := &rg.rules[i]
+	for _, r := range rg.rulesByPhase[phase] {
 		// if there is already an interruption and the phase isn't logging
 		// we break the loop
 		if tx.IsInterrupted() && phase != types.PhaseLogging {
 			break RulesLoop
-		}
-		// Rules with phase 0 will always run
-		if r.Phase_ != 0 && r.Phase_ != phase {
-			// Execute the rule in inferred phases too if multiphase evaluation is enabled
-			// For chained rules, inferredPhases is not relevant, we rather have to run from minimal potentially
-			// matchable phase up to the rule's defined phase (chainMinPhase <= phase <= Phase_)
-			// At the first run chainMinPhase is not set, so we look at the parent chain rule's minimal phase.
-			// If it is not reached, we skip the whole chain, there is no chance to match it.
-			if !multiphaseEvaluation ||
-				(!r.HasChain && !r.has(phase)) ||
-				(r.HasChain && phase < r.chainMinPhase) ||
-				(r.HasChain && !r.hasOrMinor(phase) && !r.withPhaseUnknownVariable) ||
-				(r.HasChain && phase > r.Phase_) {
-				continue
-			}
 		}
 
 		// we skip the rule in case it's in the excluded list
