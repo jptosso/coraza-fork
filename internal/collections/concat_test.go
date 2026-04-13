@@ -4,6 +4,7 @@
 package collections
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -94,6 +95,64 @@ func assertValuesMatch(t *testing.T, matches []types.MatchData, wantValues ...st
 	if want, have := strings.Join(wantValues, ","), strings.Join(haveValues, ","); want != have {
 		t.Errorf("want %q, have %q", want, have)
 	}
+}
+
+// TestConcatKeyedAppendVariableOverride verifies that AppendAll/AppendString/AppendRegex
+// correctly override Variable_ to the concat collection's variable even when the
+// underlying dst slice is reallocated mid-loop.
+func TestConcatKeyedAppendVariableOverride(t *testing.T) {
+	c1 := NewMap(variables.ArgsGet)
+	c2 := NewMap(variables.ArgsPost)
+	// Add enough items to guarantee at least one reallocation when starting from nil.
+	for i := 0; i < 100; i++ {
+		c1.Add(fmt.Sprintf("key%d", i), fmt.Sprintf("get%d", i))
+		c2.Add(fmt.Sprintf("key%d", i), fmt.Sprintf("post%d", i))
+	}
+
+	c := NewConcatKeyed(variables.Args, c1, c2)
+
+	t.Run("AppendAll", func(t *testing.T) {
+		dst := c.AppendAll(nil)
+		if len(dst) != 200 {
+			t.Fatalf("want 200 elements, got %d", len(dst))
+		}
+		for i, md := range dst {
+			if md.Variable_ != variables.Args {
+				t.Errorf("dst[%d].Variable_ = %v, want Args", i, md.Variable_)
+			}
+		}
+		// Build interface slice after dst is stable — all must report Args.
+		for i := range dst {
+			if (&dst[i]).Variable() != variables.Args {
+				t.Errorf("&dst[%d].Variable() = %v, want Args", i, (&dst[i]).Variable())
+			}
+		}
+	})
+
+	t.Run("AppendString", func(t *testing.T) {
+		dst := c.AppendString("key0", nil)
+		if len(dst) != 2 {
+			t.Fatalf("want 2 elements, got %d", len(dst))
+		}
+		for i, md := range dst {
+			if md.Variable_ != variables.Args {
+				t.Errorf("dst[%d].Variable_ = %v, want Args", i, md.Variable_)
+			}
+		}
+	})
+
+	t.Run("AppendRegex", func(t *testing.T) {
+		re := regexp.MustCompile("^key1$")
+		dst := c.AppendRegex(re, nil)
+		if len(dst) != 2 {
+			t.Fatalf("want 2 elements, got %d", len(dst))
+		}
+		for i, md := range dst {
+			if md.Variable_ != variables.Args {
+				t.Errorf("dst[%d].Variable_ = %v, want Args", i, md.Variable_)
+			}
+		}
+	})
 }
 
 // assertUnorderedValuesMatch function comes in handy for comparing map values, where the order is not guaranteed

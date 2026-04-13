@@ -242,3 +242,72 @@ func BenchmarkTxSetGet(b *testing.B) {
 	})
 	b.ReportAllocs()
 }
+
+// TestMapAppendAllPointerStability verifies that AppendAll returns correct
+// Variable/Value data even when append causes dst to reallocate mid-loop.
+// We force reallocation by starting with a zero-capacity dst.
+// Note: Map iteration order is non-deterministic, so we check values as a set.
+func TestMapAppendAllPointerStability(t *testing.T) {
+	m := NewMap(variables.ArgsGet)
+	const n = 200
+	for i := 0; i < n; i++ {
+		m.Add(fmt.Sprintf("key%d", i), fmt.Sprintf("val%d", i))
+	}
+
+	// Start with cap=0 to guarantee multiple reallocations.
+	dst := m.AppendAll(nil)
+	if len(dst) != n {
+		t.Fatalf("want %d elements, got %d", n, len(dst))
+	}
+	// All elements must have the correct Variable_ after potential reallocation.
+	seen := make(map[string]bool, n)
+	for i := range dst {
+		if dst[i].Variable_ != variables.ArgsGet {
+			t.Errorf("dst[%d].Variable_ = %v, want ArgsGet", i, dst[i].Variable_)
+		}
+		seen[dst[i].Value_] = true
+	}
+	for i := 0; i < n; i++ {
+		want := fmt.Sprintf("val%d", i)
+		if !seen[want] {
+			t.Errorf("missing value %q in AppendAll result", want)
+		}
+	}
+}
+
+// TestMapAppendStringPointerStability verifies AppendString with forced reallocation.
+func TestMapAppendStringPointerStability(t *testing.T) {
+	m := NewMap(variables.ArgsGet)
+	for i := 0; i < 100; i++ {
+		m.Add("key", fmt.Sprintf("val%d", i))
+	}
+
+	dst := m.AppendString("key", nil)
+	if len(dst) != 100 {
+		t.Fatalf("want 100 elements, got %d", len(dst))
+	}
+	for i := range dst {
+		if dst[i].Variable_ != variables.ArgsGet {
+			t.Errorf("dst[%d].Variable_ = %v, want %v", i, dst[i].Variable_, variables.ArgsGet)
+		}
+	}
+}
+
+// TestMapAppendRegexPointerStability verifies AppendRegex with forced reallocation.
+func TestMapAppendRegexPointerStability(t *testing.T) {
+	m := NewMap(variables.ArgsGet)
+	re := regexp.MustCompile("^key")
+	for i := 0; i < 100; i++ {
+		m.Add(fmt.Sprintf("key%d", i), fmt.Sprintf("val%d", i))
+	}
+
+	dst := m.AppendRegex(re, nil)
+	if len(dst) != 100 {
+		t.Fatalf("want 100 elements, got %d", len(dst))
+	}
+	for i := range dst {
+		if dst[i].Variable_ != variables.ArgsGet {
+			t.Errorf("dst[%d].Variable_ = %v, want %v", i, dst[i].Variable_, variables.ArgsGet)
+		}
+	}
+}

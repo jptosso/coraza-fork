@@ -19,6 +19,7 @@ import (
 	"github.com/corazawaf/coraza/v3/debuglog"
 	"github.com/corazawaf/coraza/v3/experimental/plugins/plugintypes"
 	"github.com/corazawaf/coraza/v3/internal/auditlog"
+	"github.com/corazawaf/coraza/v3/internal/corazarules"
 	"github.com/corazawaf/coraza/v3/internal/environment"
 	"github.com/corazawaf/coraza/v3/internal/memoize"
 	stringutils "github.com/corazawaf/coraza/v3/internal/strings"
@@ -251,6 +252,8 @@ func (w *WAF) newTransaction(opts Options) *Transaction {
 
 		tx.variables = *NewTransactionVariables()
 		tx.transformationCache = map[transformationKey]transformationValue{}
+		tx.matchDataBuf = make([]corazarules.MatchData, 0, 64)
+		tx.matchDataIfaceBuf = make([]types.MatchData, 0, 64)
 	}
 
 	// set capture variables
