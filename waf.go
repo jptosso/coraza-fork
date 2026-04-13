@@ -70,6 +70,8 @@ func NewWAF(config WAFConfig) (WAF, error) {
 		}
 	}
 
+	waf.Rules.FinalizeRules()
+
 	populateAuditLog(waf, c)
 
 	if err := waf.InitAuditLogWriter(); err != nil {

@@ -5,7 +5,6 @@ package collections
 
 import (
 	"regexp"
-	"strings"
 
 	"github.com/corazawaf/coraza/v3/collection"
 	"github.com/corazawaf/coraza/v3/internal/corazarules"
@@ -58,7 +57,7 @@ func NewConcatKeyed(variable variables.RuleVariable, data ...collection.Keyed) *
 }
 
 func (c *ConcatKeyed) Get(key string) []string {
-	keyL := strings.ToLower(key)
+	keyL := toLowerASCII(key)
 	var res []string
 	for _, c := range c.data {
 		res = append(res, c.Get(keyL)...)

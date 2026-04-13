@@ -119,8 +119,8 @@ type Transaction struct {
 	// We must reuse it in the future
 	Capture bool
 
-	// Contains duration in useconds per phase
-	stopWatches map[types.RulePhase]int64
+	// Contains duration in nanoseconds per phase (indexed by RulePhase, phases 1-5, index 0 unused)
+	stopWatches [6]int64
 
 	// Contains a WAF instance for the current transaction
 	WAF *WAF
@@ -137,6 +137,10 @@ type Transaction struct {
 	variables TransactionVariables
 
 	transformationCache map[transformationKey]transformationValue
+
+	// singleArg is a reusable 1-element backing array for the non-MultiMatch evaluation path,
+	// avoiding a per-argument heap allocation in the hot loop in doEvaluate.
+	singleArg [1]string
 }
 
 func (tx *Transaction) ID() string {
@@ -610,10 +614,7 @@ func (tx *Transaction) MatchRule(r *Rule, mds []types.MatchData) {
 // Normally it should be named StopWatch() but it would be confusing
 func (tx *Transaction) GetStopWatch() string {
 	ts := tx.Timestamp
-	sum := int64(0)
-	for _, r := range tx.stopWatches {
-		sum += r
-	}
+	sum := tx.stopWatches[1] + tx.stopWatches[2] + tx.stopWatches[3] + tx.stopWatches[4] + tx.stopWatches[5]
 	diff := time.Now().UnixNano() - ts
 	sw := fmt.Sprintf("%d %d; combined=%d, p1=%d, p2=%d, p3=%d, p4=%d, p5=%d",
 		ts, diff, sum, tx.stopWatches[1], tx.stopWatches[2], tx.stopWatches[3], tx.stopWatches[4], tx.stopWatches[5])
@@ -658,7 +659,11 @@ func (tx *Transaction) GetField(rv ruleVariableParams) []types.MatchData {
 		isException := false
 		lkey := strings.ToLower(c.Key())
 		for _, ex := range rv.Exceptions {
-			if (ex.KeyRx != nil && ex.KeyRx.MatchString(lkey)) || strings.ToLower(ex.KeyStr) == lkey || (ex.KeyStr == "" && ex.KeyRx == nil) {
+			exLower := ex.KeyStrLower
+		if exLower == "" {
+			exLower = strings.ToLower(ex.KeyStr)
+		}
+		if (ex.KeyRx != nil && ex.KeyRx.MatchString(lkey)) || exLower == lkey || (ex.KeyStr == "" && ex.KeyRx == nil) {
 				isException = true
 				break
 			}
@@ -694,6 +699,10 @@ func (tx *Transaction) RemoveRuleTargetByID(id int, variable variables.RuleVaria
 		Variable: variable,
 		KeyStr:   key,
 		KeyRx:    keyRx,
+	}
+
+	if tx.ruleRemoveTargetByID == nil {
+		tx.ruleRemoveTargetByID = make(map[int][]ruleVariableParams)
 	}
 
 	if multiphaseEvaluation && (variable == variables.Args || variable == variables.ArgsNames) {
@@ -1664,6 +1673,9 @@ func (tx *Transaction) auditLogCollectFiles() []plugintypes.AuditLogTransactionR
 // This method helps the GC to clean up the transaction faster and release resources
 // It also allows caches the transaction back into the sync.Pool
 func (tx *Transaction) Close() error {
+	// Clear the singleArg scratch slot so the pooled transaction does not
+	// retain a reference to the last transformed string across requests.
+	tx.singleArg[0] = ""
 	defer tx.WAF.txPool.Put(tx)
 
 	var errs []error

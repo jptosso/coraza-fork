@@ -47,6 +47,10 @@ type ruleVariableException struct {
 	// If KeyRx is not nil, KeyStr is ignored
 	KeyStr string
 
+	// KeyStrLower is strings.ToLower(KeyStr), pre-computed at parse time to avoid
+	// repeated lowercasing in the hot path of GetField.
+	KeyStrLower string
+
 	// The key for the variable that is going to be requested
 	// If nil, KeyStr is going to be used
 	KeyRx *regexp.Regexp
@@ -190,10 +194,6 @@ const noID = 0
 func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Transaction, collectiveMatchedValues *[]types.MatchData, chainLevel int, cache map[transformationKey]transformationValue) []types.MatchData {
 	tx.Capture = r.Capture
 
-	if multiphaseEvaluation {
-		computeRuleChainMinPhase(r)
-	}
-
 	var matchedValues []types.MatchData
 	// we log if we are the parent rule
 	logger.Debug().Msg("Evaluating rule")
@@ -237,10 +237,16 @@ func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Tra
 				continue
 			}
 			var values []types.MatchData
-			for _, c := range ecol {
-				if c.Variable == v.Variable {
-					// TODO shall we check the pointer?
-					v.Exceptions = append(v.Exceptions, ruleVariableException{c.KeyStr, c.KeyRx})
+			if len(ecol) > 0 {
+				// Cap-limit before appending so any growth allocates a new backing
+				// array instead of writing into the rule's shared Exceptions slice.
+				// Rules are shared across concurrent transactions.
+				v.Exceptions = v.Exceptions[:len(v.Exceptions):len(v.Exceptions)]
+				for _, c := range ecol {
+					if c.Variable == v.Variable {
+						// TODO shall we check the pointer?
+						v.Exceptions = append(v.Exceptions, ruleVariableException{KeyStr: c.KeyStr, KeyStrLower: strings.ToLower(c.KeyStr), KeyRx: c.KeyRx})
+					}
 				}
 			}
 
@@ -252,7 +258,7 @@ func (r *Rule) doEvaluate(logger debuglog.Logger, phase types.RulePhase, tx *Tra
 			}
 			vLog.Debug().Msg("Expanding arguments for rule")
 
-			args := make([]string, 1)
+			args := tx.singleArg[:]
 			var errs []error
 			var argsLen int
 			for i, arg := range values {
@@ -640,12 +646,12 @@ func (r *Rule) AddVariableNegation(v variables.RuleVariable, key string) error {
 		// Even when Args and ArgsNames are one map, the exceptions must be created for the individual maps the
 		// Concat Map contains in order for exceptions to apply in the corresponding phase.
 		if multiphaseEvaluation && needToSplitConcatenatedVariable(v, rv.Variable) {
-			rv.Exceptions = append(rv.Exceptions, ruleVariableException{key, re})
+			rv.Exceptions = append(rv.Exceptions, ruleVariableException{KeyStr: key, KeyStrLower: strings.ToLower(key), KeyRx: re})
 			r.variables[i] = rv
 			continue
 		}
 		if rv.Variable == v {
-			rv.Exceptions = append(rv.Exceptions, ruleVariableException{key, re})
+			rv.Exceptions = append(rv.Exceptions, ruleVariableException{KeyStr: key, KeyStrLower: strings.ToLower(key), KeyRx: re})
 			r.variables[i] = rv
 		}
 	}

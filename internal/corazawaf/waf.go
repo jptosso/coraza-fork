@@ -28,6 +28,10 @@ import (
 
 var wafIDCounter atomic.Uint64
 
+// txCaptureKeys holds pre-computed string keys for TX capture variables 0-10,
+// avoiding strconv.Itoa allocation on every transaction reset.
+var txCaptureKeys = [11]string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
+
 // Default settings
 const (
 	// DefaultRequestBodyJsonDepthLimit is the default limit for the depth of JSON objects in the request body
@@ -199,7 +203,8 @@ func (w *WAF) newTransaction(opts Options) *Transaction {
 	tx := w.txPool.Get().(*Transaction)
 	tx.id = opts.ID
 	tx.context = opts.Context
-	tx.matchedRules = []types.MatchedRule{}
+	clear(tx.matchedRules)
+	tx.matchedRules = tx.matchedRules[:0]
 	tx.interruption = nil
 	tx.Logdata = "" // Deprecated, this variable is not used. Logdata for each matched rule is stored in the MatchData field.
 	tx.SkipAfter = ""
@@ -217,11 +222,11 @@ func (w *WAF) newTransaction(opts Options) *Transaction {
 	tx.lastPhase = 0
 	tx.ruleRemoveByID = nil
 	tx.ruleRemoveByIDRanges = nil
-	tx.ruleRemoveTargetByID = map[int][]ruleVariableParams{}
+	tx.ruleRemoveTargetByID = nil
 	tx.Skip = 0
 	tx.AllowType = 0
 	tx.Capture = false
-	tx.stopWatches = map[types.RulePhase]int64{}
+	tx.stopWatches = [6]int64{}
 	tx.WAF = w
 	tx.debugLogger = w.Logger.With(debuglog.Str("tx_id", tx.id))
 	tx.Timestamp = time.Now().UnixNano()
@@ -250,13 +255,12 @@ func (w *WAF) newTransaction(opts Options) *Transaction {
 		})
 
 		tx.variables = *NewTransactionVariables()
-		tx.transformationCache = map[transformationKey]transformationValue{}
+		tx.transformationCache = make(map[transformationKey]transformationValue, 256)
 	}
 
 	// set capture variables
 	for i := 0; i <= 10; i++ {
-		is := strconv.Itoa(i)
-		tx.variables.tx.Set(is, []string{""})
+		tx.variables.tx.Set(txCaptureKeys[i], []string{""})
 	}
 
 	// Some defaults
