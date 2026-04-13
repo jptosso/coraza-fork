@@ -98,6 +98,75 @@ func (c *ConcatKeyed) Name() string {
 	return c.variable.Name()
 }
 
+// matchAppender is a local interface for append-based access to collections.
+// Methods only append to dst; the caller is responsible for building any
+// interface slice from stable dst addresses after all appends are complete.
+type matchAppender interface {
+	AppendAll([]corazarules.MatchData) []corazarules.MatchData
+	AppendString(string, []corazarules.MatchData) []corazarules.MatchData
+	AppendRegex(*regexp.Regexp, []corazarules.MatchData) []corazarules.MatchData
+}
+
+// AppendAll appends all ConcatKeyed elements to dst, overriding the variable to c.variable.
+func (c *ConcatKeyed) AppendAll(dst []corazarules.MatchData) []corazarules.MatchData {
+	for _, d := range c.data {
+		if app, ok := d.(matchAppender); ok {
+			start := len(dst)
+			dst = app.AppendAll(dst)
+			for i := start; i < len(dst); i++ {
+				dst[i].Variable_ = c.variable
+			}
+		} else {
+			for _, m := range d.FindAll() {
+				md := *m.(*corazarules.MatchData)
+				md.Variable_ = c.variable
+				dst = append(dst, md)
+			}
+		}
+	}
+	return dst
+}
+
+// AppendString appends all ConcatKeyed elements whose key matches the string to dst.
+func (c *ConcatKeyed) AppendString(key string, dst []corazarules.MatchData) []corazarules.MatchData {
+	for _, d := range c.data {
+		if app, ok := d.(matchAppender); ok {
+			start := len(dst)
+			dst = app.AppendString(key, dst)
+			for i := start; i < len(dst); i++ {
+				dst[i].Variable_ = c.variable
+			}
+		} else {
+			for _, m := range d.FindString(key) {
+				md := *m.(*corazarules.MatchData)
+				md.Variable_ = c.variable
+				dst = append(dst, md)
+			}
+		}
+	}
+	return dst
+}
+
+// AppendRegex appends all ConcatKeyed elements whose key matches the regex to dst.
+func (c *ConcatKeyed) AppendRegex(key *regexp.Regexp, dst []corazarules.MatchData) []corazarules.MatchData {
+	for _, d := range c.data {
+		if app, ok := d.(matchAppender); ok {
+			start := len(dst)
+			dst = app.AppendRegex(key, dst)
+			for i := start; i < len(dst); i++ {
+				dst[i].Variable_ = c.variable
+			}
+		} else {
+			for _, m := range d.FindRegex(key) {
+				md := *m.(*corazarules.MatchData)
+				md.Variable_ = c.variable
+				dst = append(dst, md)
+			}
+		}
+	}
+	return dst
+}
+
 // replaceVariable ensures a returned match references the variable of a concatenated variable,
 // not original one.
 func replaceVariable(v variables.RuleVariable, md []types.MatchData) []types.MatchData {

@@ -143,6 +143,63 @@ func (c *Map) FindAll() []types.MatchData {
 	return result
 }
 
+// AppendAll appends all map elements to dst and returns the extended slice.
+// Callers must build any interface slice from stable dst addresses only after
+// all Append* calls complete, to avoid pointer aliasing on reallocation.
+func (c *Map) AppendAll(dst []corazarules.MatchData) []corazarules.MatchData {
+	for _, data := range c.data {
+		for _, d := range data {
+			dst = append(dst, corazarules.MatchData{
+				Variable_: c.variable,
+				Key_:      d.key,
+				Value_:    d.value,
+			})
+		}
+	}
+	return dst
+}
+
+// AppendString appends all elements whose key matches the given string to dst.
+func (c *Map) AppendString(key string, dst []corazarules.MatchData) []corazarules.MatchData {
+	if key == "" {
+		return c.AppendAll(dst)
+	}
+	if len(c.data) == 0 {
+		return dst
+	}
+	if !c.isCaseSensitive {
+		key = strings.ToLower(key)
+	}
+	e, ok := c.data[key]
+	if !ok || len(e) == 0 {
+		return dst
+	}
+	for _, aVar := range e {
+		dst = append(dst, corazarules.MatchData{
+			Variable_: c.variable,
+			Key_:      aVar.key,
+			Value_:    aVar.value,
+		})
+	}
+	return dst
+}
+
+// AppendRegex appends all elements whose key matches the regex to dst.
+func (c *Map) AppendRegex(key *regexp.Regexp, dst []corazarules.MatchData) []corazarules.MatchData {
+	for k, data := range c.data {
+		if key.MatchString(k) {
+			for _, d := range data {
+				dst = append(dst, corazarules.MatchData{
+					Variable_: c.variable,
+					Key_:      d.key,
+					Value_:    d.value,
+				})
+			}
+		}
+	}
+	return dst
+}
+
 // Add adds a new key-value pair to the map.
 func (c *Map) Add(key string, value string) {
 	aVal := keyValue{key: key, value: value}

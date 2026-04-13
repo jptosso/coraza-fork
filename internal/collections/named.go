@@ -177,6 +177,52 @@ func (c *NamedCollectionNames) FindAll() []types.MatchData {
 	return res
 }
 
+// AppendAll appends all NamedCollectionNames elements to dst.
+func (c *NamedCollectionNames) AppendAll(dst []corazarules.MatchData) []corazarules.MatchData {
+	for _, data := range c.collection.data {
+		for _, d := range data {
+			dst = append(dst, corazarules.MatchData{
+				Variable_: c.variable,
+				Key_:      d.key,
+				Value_:    d.key,
+			})
+		}
+	}
+	return dst
+}
+
+// AppendString appends all NamedCollectionNames elements whose key matches the string to dst.
+func (c *NamedCollectionNames) AppendString(key string, dst []corazarules.MatchData) []corazarules.MatchData {
+	data, ok := c.collection.data[key]
+	if !ok || len(data) == 0 {
+		return dst
+	}
+	for _, d := range data {
+		dst = append(dst, corazarules.MatchData{
+			Variable_: c.variable,
+			Key_:      d.key,
+			Value_:    d.key,
+		})
+	}
+	return dst
+}
+
+// AppendRegex appends all NamedCollectionNames elements whose key matches the regex to dst.
+func (c *NamedCollectionNames) AppendRegex(key *regexp.Regexp, dst []corazarules.MatchData) []corazarules.MatchData {
+	for k, data := range c.collection.data {
+		if key.MatchString(k) {
+			for _, d := range data {
+				dst = append(dst, corazarules.MatchData{
+					Variable_: c.variable,
+					Key_:      d.key,
+					Value_:    d.key,
+				})
+			}
+		}
+	}
+	return dst
+}
+
 func (c *NamedCollectionNames) Name() string {
 	return c.variable.Name()
 }
