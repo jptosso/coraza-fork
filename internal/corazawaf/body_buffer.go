@@ -146,9 +146,18 @@ func (br *BodyBuffer) Size() int64 {
 	return br.length
 }
 
+// maxRetainedBodyBufCap is the maximum capacity of the body buffer that will be
+// retained across transaction resets. Larger buffers are discarded to avoid
+// holding onto large allocations in the pool.
+const maxRetainedBodyBufCap = 64 * 1024
+
 // Reset will reset buffers and delete temporary files
 func (br *BodyBuffer) Reset() error {
-	br.buffer.Reset()
+	if br.buffer.Cap() > maxRetainedBodyBufCap {
+		br.buffer = &bytes.Buffer{}
+	} else {
+		br.buffer.Reset()
+	}
 	br.length = 0
 
 	// close all readers, this is important because connectors may have

@@ -161,9 +161,7 @@ func (rg *RuleGroup) Eval(phase types.RulePhase, tx *Transaction) bool {
 	usedRules := 0
 	ts := time.Now().UnixNano()
 	transformationCache := tx.transformationCache
-	for k := range transformationCache {
-		delete(transformationCache, k)
-	}
+	clear(transformationCache)
 RulesLoop:
 	for i := range rg.rules {
 		r := &rg.rules[i]
@@ -277,6 +275,17 @@ RulesLoop:
 
 	tx.stopWatches[phase] = time.Now().UnixNano() - ts
 	return tx.IsInterrupted()
+}
+
+// FinalizeRules pre-computes per-rule data that is expensive to compute at eval time.
+// It must be called once after all rules are loaded. Subsequent calls are safe (idempotent
+// for the chainMinPhase computation since the guard inside the function prevents re-computation).
+func (rg *RuleGroup) FinalizeRules() {
+	if multiphaseEvaluation {
+		for i := range rg.rules {
+			computeRuleChainMinPhase(&rg.rules[i])
+		}
+	}
 }
 
 // NewRuleGroup creates an empty RuleGroup that
